@@ -144,7 +144,6 @@ with col1:
 with col2:
     fig_fcp = go.Figure()
     fig_fcp.add_trace(go.Scattergl(x=np.arange(len(fcp)), y=fcp, mode="lines", name="OnlineSCI"))
-    fig_fcp.add_trace(go.Scattergl(x=np.arange(len(fcp_best)), y=fcp_best, mode="lines", name="Oracle"))
-    fig_fcp.add_hline(y=alpha, line_dash="dash", line_color="black")
+    fig_fcp.add_trace(go.Scattergl(x=np.arange(len(fcp_best)), y=fcp_best, mode="lines", name="Oracle", line_color="black"))
     fig_fcp.update_layout(xaxis_title="Selected time", yaxis_title="FCP")
     st.plotly_chart(fig_fcp, use_container_width=True) 
