@@ -3,6 +3,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
+st.set_page_config(page_title="OnlineSCI", layout="wide")
+
+
 def generate_dataset(n: int, p: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     probs = np.array([0.8, 0.2])
     means = np.array([0.0, 3.0])
@@ -14,7 +17,6 @@ def generate_dataset(n: int, p: int, rng: np.random.Generator) -> tuple[np.ndarr
 
 def posterior_class_one(x: np.ndarray) -> np.ndarray:
     """Returns P(Y = 1 | X = x) for the two-component Gaussian mixture."""
-    p = x.shape[1]
     log_prior_0 = np.log(0.8)
     log_prior_1 = np.log(0.2)
 
@@ -22,8 +24,7 @@ def posterior_class_one(x: np.ndarray) -> np.ndarray:
     log_phi_1 = -0.5 * np.sum((x - 3.0) ** 2, axis=1) + log_prior_1
 
     m = np.maximum(log_phi_0, log_phi_1)
-    prob_1 = np.exp(log_phi_1 - m) / (np.exp(log_phi_0 - m) + np.exp(log_phi_1 - m))
-    return prob_1
+    return np.exp(log_phi_1 - m) / (np.exp(log_phi_0 - m) + np.exp(log_phi_1 - m))
 
 
 def online_sci(
@@ -34,7 +35,7 @@ def online_sci(
     q0: float,
     bound: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """OnlineSCI update for the threshold q_t."""
+    """Runs the OnlineSCI threshold update."""
     n = len(y)
 
     q = np.empty(n)
@@ -90,8 +91,8 @@ def estimate_q_star(alpha: float, p: int, seed: int = 123, n_mc: int = 100_000) 
     grid = np.linspace(0.0, 0.99, 1000)
     pi_q = np.full_like(grid, np.nan)
 
-    for i, q in enumerate(grid):
-        selected = scores > q
+    for i, q_value in enumerate(grid):
+        selected = scores > q_value
         if np.any(selected):
             pi_q[i] = np.mean(y[selected] == 0)
 
@@ -108,11 +109,13 @@ $(c, \beta)$: step-size parameters with $\gamma_t = c t^{-\beta}$.
 )
 
 p = 2
-n = st.sidebar.number_input("Sample size", min_value=1_000, max_value=100_000, value=20_000, step=1_000)
-q0 = st.sidebar.slider("q0", 0.0, 1.0, 0.1)
-c = st.sidebar.slider("c", 0.1, 1.0, 0.5)
-beta = st.sidebar.slider("beta", 0.5, 0.9, 0.8)
 alpha = 0.1
+
+with st.sidebar:
+    n = st.number_input("Sample size", min_value=1_000, max_value=100_000, value=20_000, step=1_000)
+    q0 = st.slider("q0", 0.0, 1.0, 0.1)
+    c = st.slider("c", 0.1, 1.0, 0.5)
+    beta = st.slider("beta", 0.5, 0.9, 0.8)
 
 x, y, scores = make_data(n=n, p=p, seed=1)
 q_star = estimate_q_star(alpha=alpha, p=p)
@@ -122,6 +125,7 @@ gamma = c / (t**beta)
 
 q, err, selected = online_sci(scores=scores, y=y, gamma=gamma, alpha=alpha, q0=q0)
 fcp = selected_running_mean(err, selected)
+fcp_x = np.where(selected)[0]
 
 q_best, err_best, selected_best = online_sci(
     scores=scores,
@@ -131,19 +135,29 @@ q_best, err_best, selected_best = online_sci(
     q0=q_star,
 )
 fcp_best = selected_running_mean(err_best, selected_best)
+fcp_best_x = np.where(selected_best)[0]
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns(2, gap="large")
+plot_height = 650
 
 with col1:
     fig_q = go.Figure()
     fig_q.add_trace(go.Scattergl(x=np.arange(n), y=q, mode="lines", name="q_t"))
     fig_q.add_hline(y=q_star, line_color="black", line_width=2)
-    fig_q.update_layout(xaxis_title="Time", yaxis_title="q_t")
+    fig_q.update_layout(height=plot_height, xaxis_title="Time", yaxis_title="q_t")
     st.plotly_chart(fig_q, use_container_width=True)
 
 with col2:
     fig_fcp = go.Figure()
-    fig_fcp.add_trace(go.Scattergl(x=np.arange(len(fcp)), y=fcp, mode="lines", name="OnlineSCI"))
-    fig_fcp.add_trace(go.Scattergl(x=np.arange(len(fcp_best)), y=fcp_best, mode="lines", name="Oracle", line_color="black"))
-    fig_fcp.update_layout(xaxis_title="Selected time", yaxis_title="FCP")
+    fig_fcp.add_trace(go.Scattergl(x=fcp_x, y=fcp, mode="lines", name="OnlineSCI"))
+    fig_fcp.add_trace(
+        go.Scattergl(
+            x=fcp_best_x,
+            y=fcp_best,
+            mode="lines",
+            name="Oracle",
+            line=dict(color="black", width=2),
+        )
+    )
+    fig_fcp.update_layout(height=plot_height, xaxis_title="Time", yaxis_title="FCP")
     st.plotly_chart(fig_fcp, use_container_width=True) 
