@@ -1,233 +1,150 @@
-import streamlit as st
 import numpy as np
-import pandas as pd
-from scipy.stats import multivariate_normal
-
 import plotly.graph_objects as go
+import streamlit as st
 
-def infoACI_precompute_q_optim(
-    dt_Xt,
-    dt_Yt,
-    dt_Ypredt,
-    dt_Scorest,
-    info_fun,
-    Error_func,
-    gamma,
-    alpha=0.1,
-    q0=1,
-    reac0=0,
-    B=0,
-):
-    dates = dt_Yt.index
 
-    X = dt_Xt.to_numpy()
-    Y = dt_Yt["value"].to_numpy()
-    Ypred = dt_Ypredt["value"].to_numpy()
-    Scores = dt_Scorest.to_numpy()
-    gamma = np.asarray(gamma)
+def generate_dataset(n: int, p: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    probs = np.array([0.8, 0.2])
+    means = np.array([0.0, 3.0])
 
-    T = len(Y)
+    y = rng.choice(2, size=n, p=probs)
+    x = rng.normal(loc=means[y, None], scale=1.0, size=(n, p))
+    return x, y
 
-    Qt = np.empty(T)
-    errt = np.empty(T)
-    infot = np.empty(T)
 
-    Qt[0] = q0
-    errt[0] = np.nan
-    infot[0] = np.nan
+def posterior_class_one(x: np.ndarray) -> np.ndarray:
+    """Returns P(Y = 1 | X = x) for the two-component Gaussian mixture."""
+    p = x.shape[1]
+    log_prior_0 = np.log(0.8)
+    log_prior_1 = np.log(0.2)
 
-    ll = 0
+    log_phi_0 = -0.5 * np.sum(x**2, axis=1) + log_prior_0
+    log_phi_1 = -0.5 * np.sum((x - 3.0) ** 2, axis=1) + log_prior_1
 
-    for r in range(1, T):
-        q_prev = Qt[r - 1]
+    m = np.maximum(log_phi_0, log_phi_1)
+    prob_1 = np.exp(log_phi_1 - m) / (np.exp(log_phi_0 - m) + np.exp(log_phi_1 - m))
+    return prob_1
 
-        err_t = Error_func(Ypred[r], Y[r], X[r], Scores[r], q_prev)
-        reac_t = err_t if q_prev >= reac0 else 1.0
 
-        if info_fun(Ypred[r], Y[r], X[r], Scores[r], q_prev):
-            ll += 1
-            infot[r] = 1.0
-            qt_new = q_prev + gamma[ll - 1] * (reac_t - alpha)
+def online_sci(
+    scores: np.ndarray,
+    y: np.ndarray,
+    gamma: np.ndarray,
+    alpha: float,
+    q0: float,
+    bound: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """OnlineSCI update for the threshold q_t."""
+    n = len(y)
+
+    q = np.empty(n)
+    err = np.empty(n)
+    selected = np.zeros(n, dtype=bool)
+
+    q[0] = q0
+    err[0] = np.nan
+
+    n_selected = 0
+
+    for t in range(1, n):
+        q_prev = q[t - 1]
+        err_t = float(y[t] == 0)
+
+        if scores[t] > q_prev:
+            selected[t] = True
+            n_selected += 1
+            q_new = q_prev + gamma[n_selected - 1] * (err_t - alpha)
         else:
-            infot[r] = 0.0
-            qt_new = q_prev
+            q_new = q_prev
 
-        if B > 0 and qt_new > B:
-            qt_new = q0
+        if bound > 0.0 and q_new > bound:
+            q_new = q0
 
-        Qt[r] = qt_new
-        errt[r] = err_t
+        q[t] = q_new
+        err[t] = err_t
 
-    dt_Qt = pd.DataFrame({"value": Qt}, index=dates)
-    dt_errt = pd.DataFrame({"value": errt}, index=dates)
-    dt_infot = pd.DataFrame({"value": infot}, index=dates)
+    return q, err, selected
 
-    return dt_Qt, dt_errt, dt_infot
+
+def selected_running_mean(err: np.ndarray, selected: np.ndarray) -> np.ndarray:
+    values = err[selected]
+    if len(values) == 0:
+        return np.array([])
+    return np.cumsum(values) / np.arange(1, len(values) + 1)
+
+
+@st.cache_data
+def make_data(n: int, p: int, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    x, y = generate_dataset(n, p, rng)
+    scores = posterior_class_one(x)
+    return x, y, scores
+
+
+@st.cache_data
+def estimate_q_star(alpha: float, p: int, seed: int = 123, n_mc: int = 100_000) -> float:
+    rng = np.random.default_rng(seed)
+    x, y = generate_dataset(n_mc, p, rng)
+    scores = posterior_class_one(x)
+
+    grid = np.linspace(0.0, 0.99, 1000)
+    pi_q = np.full_like(grid, np.nan)
+
+    for i, q in enumerate(grid):
+        selected = scores > q
+        if np.any(selected):
+            pi_q[i] = np.mean(y[selected] == 0)
+
+    return float(grid[np.nanargmin(np.abs(pi_q - alpha))])
+
 
 st.title("Online conformal testing with OnlineSCI")
 
-st.markdown("""
+st.markdown(
+    r"""
+$q_0$: initial threshold.  
+$(c, \beta)$: step-size parameters with $\gamma_t = c t^{-\beta}$.
+"""
+)
 
-$q_0$: $~$ Initialisation point $~~~~~~$ $(c, \\beta)$: $~$ Step-size $~$ $\\gamma_t = c \cdot t^{-\\beta}$
+p = 2
+n = st.sidebar.number_input("Sample size", min_value=1_000, max_value=100_000, value=20_000, step=1_000)
+q0 = st.sidebar.slider("q0", 0.0, 1.0, 0.1)
+c = st.sidebar.slider("c", 0.1, 1.0, 0.5)
+beta = st.sidebar.slider("beta", 0.5, 0.9, 0.8)
+alpha = 0.1
 
-""")
+x, y, scores = make_data(n=n, p=p, seed=1)
+q_star = estimate_q_star(alpha=alpha, p=p)
 
-# ============================
-p = 2 
+t = np.arange(1, n + 1)
+gamma = c / (t**beta)
 
-proby = np.array((.8, .2))
-mu1 = 0
-mu2 = 3
+q, err, selected = online_sci(scores=scores, y=y, gamma=gamma, alpha=alpha, q0=q0)
+fcp = selected_running_mean(err, selected)
 
-def generate_dataset(n, p):
-    Y = np.random.choice(np.array((0, 1)), p=proby, size=n)
-    X = []
-    for i in range(n):
-        if Y[i] == 0:
-            X.append(np.random.normal(mu1, 1, size=p))
-        elif Y[i] == 1:
-            X.append(np.random.normal(mu2, 1, size=p))
-    X = np.array(X)
-    return X, Y
+q_best, err_best, selected_best = online_sci(
+    scores=scores,
+    y=y,
+    gamma=np.zeros(n),
+    alpha=alpha,
+    q0=q_star,
+)
+fcp_best = selected_running_mean(err_best, selected_best)
 
-def f(x):
-    prob_x = multivariate_normal(mu1*np.ones(p), np.ones(p)).pdf(x)*proby[0] 
-    prob_x += multivariate_normal(mu2*np.ones(p), np.ones(p)).pdf(x)*proby[1]
-    
-    e1 = multivariate_normal(mu1*np.ones(p), np.ones(p)).pdf(x) / prob_x * proby[0]
-    e2 = multivariate_normal(mu2*np.ones(p), np.ones(p)).pdf(x) / prob_x * proby[1]
-    return np.array((e1, e2)).T 
-
-def Score_func(y_pred, y, x):
-     if len(y_pred.shape) > 1:
-        return y_pred[:, 1]
-     else: 
-        return y_pred[1]
-
-def info_fun(y_pred, y, x, s, q):
-    return (s > q)*1
-
-def Error_func(y_pred, y, x, s, q):
-    return (y == 0).astype(float)
-
-np.random.seed(1)
-n = 20000
-X, Y = generate_dataset(n, p)
-
-Xt = X[:].copy()
-Yt = Y[:len(Xt)].copy()
-
-dates = np.arange(len(Xt))
-T = len(Xt)
-
-Ypredt = np.argmax(f(Xt), axis=1)
-Scoret = Score_func(f(Xt), Yt, Xt)
-
-# Computation of Pi(q)
-alpha=.1
-
-ni = 100000
-Xi, Yi = generate_dataset(ni, p)
-
-Ypredi = np.argmax(f(Xi), axis=1)*0 + 1
-Scorei = Score_func(f(Xi), Yi, Xi)
-
-PIq = []
-for q in np.linspace(0, .99, 1000):
-    info = info_fun(Ypredi, Yi, Xi, Scorei, q)
-    err = Error_func(Ypredi, Yi, Xi, Scorei, q)
-    ind = np.where(info==1)
-    PIq.append(np.mean(err[ind]))
-PIq = np.array(PIq)
-q_star = np.linspace(0, 1, 1000)[np.argmin(np.abs(PIq-alpha))]
-
-# Create a DataFrame from the generated data
-c_names = ['date']
-for i in range(p):
-    c_names.append('value_' + str(i))
-
-dt_Xt = np.vstack((dates.T, Xt.T)).T
-dt_Xt = pd.DataFrame(dt_Xt, columns=c_names)
-# Set the 'date' column as the index
-dt_Xt.set_index('date', inplace=True)
-
-# Create a DataFrame from the generated data
-dt_Yt = pd.DataFrame({'date': dates, 'value': Yt})
-# Set the 'date' column as the index
-dt_Yt.set_index('date', inplace=True)
-
-# Create a DataFrame from the generated data
-dt_Ypredt = pd.DataFrame({'date': dates, 'value': Ypredt})
-# Set the 'date' column as the index
-dt_Ypredt.set_index('date', inplace=True)
-
-# Create a DataFrame from the ge5nerated data
-dt_Scoret = pd.DataFrame({'date': dates, 'value': Scoret})
-# Set the 'date' column as the index
-dt_Scoret.set_index('date', inplace=True)
-
-t_range = np.arange(1, T+1)
-BEST = infoACI_precompute_q_optim(dt_Xt, dt_Yt, dt_Ypredt, dt_Scoret, info_fun, Error_func, t_range*0, alpha, q0=q_star, B=1)
-BEST_ind_select = np.where(BEST[2]['value']==1)[0]
-BEST_dtf = pd.DataFrame(np.cumsum(BEST[1]['value'][BEST_ind_select])/np.arange(1, len(BEST_ind_select)+1))
-# ============================
-
-q0 = st.slider("q0", 0., 1., 0.1)
-c = st.slider("c", 0.1, 1., 0.5)
-beta = st.slider("beta", 0.5, 0.9, 0.8)
-alpha = .1
-
-t_range = np.arange(1, T+1)
-gamma = 1/(t_range**(beta))*c
-dt_Qt_infoACIq, dt_errt_infoACIq, dtof_infot_infoACIq = infoACI_precompute_q_optim(dt_Xt, dt_Yt, dt_Ypredt, dt_Scoret, info_fun, Error_func, gamma, alpha, q0=q0, B=1)
-
-ind_select = np.where(dtof_infot_infoACIq['value']==1)[0]
-dtf = pd.DataFrame(np.cumsum(dt_errt_infoACIq['value'][ind_select])/np.arange(1, len(ind_select)+1))
-
-# Create a layout with two columns
 col1, col2 = st.columns(2)
 
-# Place fig1 in the first column
 with col1:
-    fig1 = go.Figure(
-        go.Scattergl(
-            x=dt_Qt_infoACIq.index,
-            y=dt_Qt_infoACIq["value"],
-            mode="lines",
-        )
-    )
-    fig1.add_hline(
-        y=q_star,  # Y-value where the line will be drawn
-        line_color="black",  # Color of the line
-        line_width=2,  # Width of the line
-    )
-    fig1.update_layout(
-        xaxis_title=dict(text="Times", font=dict(size=20)),
-    yaxis_title=dict(text="q_t", font=dict(size=20))
-    )
-    st.plotly_chart(fig1, use_container_width=True)
+    fig_q = go.Figure()
+    fig_q.add_trace(go.Scattergl(x=np.arange(n), y=q, mode="lines", name="q_t"))
+    fig_q.add_hline(y=q_star, line_color="black", line_width=2)
+    fig_q.update_layout(xaxis_title="Time", yaxis_title="q_t")
+    st.plotly_chart(fig_q, use_container_width=True)
 
-# Place fig2 in the second column
 with col2:
-    fig2 = go.Figure(
-        go.Scattergl(
-            x=dtf.index,
-            y=dtf["value"],
-            mode="lines",
-            showlegend=False
-        )
-    )
-    fig2.add_trace(
-        go.Scatter(
-            x=BEST_dtf.index,
-            y=BEST_dtf["value"],
-            mode="lines",
-            line=dict(color="black"),
-            showlegend=False
-        )
-    )
-    fig2.update_layout(
-        xaxis_title=dict(text="Times", font=dict(size=20)),
-        yaxis_title=dict(text="FCP", font=dict(size=20))
-    )
-    st.plotly_chart(fig2, use_container_width=True)
+    fig_fcp = go.Figure()
+    fig_fcp.add_trace(go.Scattergl(x=np.arange(len(fcp)), y=fcp, mode="lines", name="OnlineSCI"))
+    fig_fcp.add_trace(go.Scattergl(x=np.arange(len(fcp_best)), y=fcp_best, mode="lines", name="Oracle"))
+    fig_fcp.add_hline(y=alpha, line_dash="dash", line_color="black")
+    fig_fcp.update_layout(xaxis_title="Selected time", yaxis_title="FCP")
+    st.plotly_chart(fig_fcp, use_container_width=True) 
