@@ -159,5 +159,5 @@ with col2:
             line=dict(color="black", width=2),
         )
     )
-    fig_fcp.update_layout(title="test", height=plot_height, xaxis_title="Time", yaxis_title="FCP")
+    fig_fcp.update_layout(title="number of selections: "+str(len(selected)), height=plot_height, xaxis_title="Time", yaxis_title="FCP")
     st.plotly_chart(fig_fcp, use_container_width=True) 
