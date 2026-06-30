@@ -167,7 +167,7 @@ dt_Scoret = pd.DataFrame({'date': dates, 'value': Scoret})
 dt_Scoret.set_index('date', inplace=True)
 
 t_range = np.arange(1, T+1)
-BEST = infoACI_precompute_q(dt_Xt, dt_Yt, dt_Ypredt, dt_Scoret, info_fun, Error_func, t_range*0, alpha, q0=q_star, B=1)
+BEST = infoACI_precompute_q_optim(dt_Xt, dt_Yt, dt_Ypredt, dt_Scoret, info_fun, Error_func, t_range*0, alpha, q0=q_star, B=1)
 BEST_ind_select = np.where(BEST[2]['value']==1)[0]
 BEST_dtf = pd.DataFrame(np.cumsum(BEST[1]['value'][BEST_ind_select])/np.arange(1, len(BEST_ind_select)+1))
 # ============================
