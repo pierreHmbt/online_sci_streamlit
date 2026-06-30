@@ -113,7 +113,7 @@ alpha = 0.1
 
 with st.sidebar:
     n = st.number_input("Sample size", min_value=1_000, max_value=100_000, value=20_000, step=1_000)
-    q0 = st.slider("q0", 0.0, 1.0, 0.1)
+    q0 = st.slider("q0", 0.0, 0.9, 0.1)
     c = st.slider("c", 0.1, 1.0, 0.5)
     beta = st.slider("beta", 0.5, 0.9, 0.8)
 
