@@ -266,7 +266,7 @@ with col2:
             x=fcp_gs_x,
             y=fcp_gs,
             mode="lines",
-            name="automatic procedure",
+            name="Automatic procedure",
             line=dict(color="firebrick", width=2),
         )
     )
