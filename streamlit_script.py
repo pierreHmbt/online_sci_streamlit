@@ -244,6 +244,7 @@ plot_height = 650
 
 with col1:
     fig_q = go.Figure()
+    fig_q.add_hline(y=q_star, line_color="black", line_width=2)
     fig_q.add_trace(go.Scattergl(x=np.arange(n), y=q, mode="lines", name="q_t"))
     fig_q.add_trace(
         go.Scattergl(
@@ -254,12 +255,20 @@ with col1:
             line=dict(color="firebrick", width=2),
         )
     )
-    fig_q.add_hline(y=q_star, line_color="black", line_width=2)
     fig_q.update_layout(height=plot_height, xaxis_title="Time", yaxis_title="q_t")
     st.plotly_chart(fig_q, use_container_width=True)
 
 with col2:
     fig_fcp = go.Figure()
+    fig_fcp.add_trace(
+        go.Scattergl(
+            x=fcp_best_x,
+            y=fcp_best,
+            mode="lines",
+            name="Oracle",
+            line=dict(color="black", width=2),
+        )
+    )
     fig_fcp.add_trace(go.Scattergl(x=fcp_x, y=fcp, mode="lines", name="OnlineSCI"))
     fig_fcp.add_trace(
         go.Scattergl(
@@ -268,15 +277,6 @@ with col2:
             mode="lines",
             name="Automatic procedure",
             line=dict(color="firebrick", width=2),
-        )
-    )
-    fig_fcp.add_trace(
-        go.Scattergl(
-            x=fcp_best_x,
-            y=fcp_best,
-            mode="lines",
-            name="Oracle",
-            line=dict(color="black", width=2),
         )
     )
     fig_fcp.update_layout(
