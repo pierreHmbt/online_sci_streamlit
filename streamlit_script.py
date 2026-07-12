@@ -33,7 +33,7 @@ def online_sci(
     gamma: np.ndarray,
     alpha: float,
     q0: float,
-    bound: float = 1.0,
+    bound: float = -1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Runs the OnlineSCI threshold update."""
     n = len(y)
@@ -177,7 +177,7 @@ p = 2
 with st.sidebar:
     n = st.number_input("Sample size", min_value=1_000, max_value=100_000, value=20_000, step=1_000)
     alpha = st.slider("alpha", 0.0, 0.5, 0.1)
-    q0 = st.slider("q0", 0.0, 0.9, 0.3)
+    q0 = st.slider("q1", 0.0, 0.9, 0.3)
     c = st.slider("c", 0.0, 1.0, 0.5)
     beta = st.slider("beta", 0.5, 0.9, 0.8)
     n_burn = st.number_input(
@@ -235,7 +235,7 @@ fcp_gs = selected_running_mean(err_gs, selected_gs)
 fcp_gs_x = np.where(selected_gs)[0]
 
 st.caption(
-    f"q0 estimated on {n_burn} independent burn-in samples: {q0_gs:.3f}. Grid "
+    f"q1 estimated on {n_burn} independent burn-in samples: {q0_gs:.3f}. Grid "
     f"search best params on the same burn-in samples — c={c_gs}, beta={beta_gs}"
 )
 
