@@ -33,9 +33,22 @@ def online_sci(
     gamma: np.ndarray,
     alpha: float,
     q0: float,
-    bound: float = -1.0,
+    bound: float = 1.0,
+    restart: bool = False,
+    c_range0: np.ndarray | None = None,
+    beta_range0: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Runs the OnlineSCI threshold update."""
+    """Runs the OnlineSCI threshold update.
+
+    If `restart` is False (default), crossing `bound` simply resets q_t back
+    to q0 — the original behavior.
+
+    If `restart` is True and `bound == 1`, crossing the bound instead
+    recalibrates the automatic procedure (q0, c, beta) using every point
+    observed so far (0..t) and resumes OnlineSCI from there with the
+    refreshed parameters. Requires `c_range0` / `beta_range0` (the grids used
+    by grid_search_best_params) to be provided.
+    """
     n = len(y)
 
     q = np.empty(n)
@@ -46,6 +59,7 @@ def online_sci(
     err[0] = np.nan
 
     n_selected = 0
+    gamma_current = gamma
 
     for t in range(1, n):
         q_prev = q[t - 1]
@@ -54,12 +68,32 @@ def online_sci(
         if scores[t] > q_prev:
             selected[t] = True
             n_selected += 1
-            q_new = q_prev + gamma[n_selected - 1] * (err_t - alpha)
+            q_new = q_prev + gamma_current[n_selected - 1] * (err_t - alpha)
         else:
             q_new = q_prev
 
         if bound > 0.0 and q_new > bound:
-            q_new = q0
+            if restart and bound == 1 and c_range0 is not None and beta_range0 is not None:
+                # Recalibrate on every point seen so far (0..t) and restart
+                # OnlineSCI from here with the refreshed parameters.
+                seen_scores, seen_y = scores[: t + 1], y[: t + 1]
+                t_seen = np.arange(1, len(seen_y) + 1)
+                q0_new = estimate_q0(seen_scores, seen_y, alpha)
+                c_new, beta_new = grid_search_best_params(
+                    scores=seen_scores,
+                    y=seen_y,
+                    t=t_seen,
+                    alpha=alpha,
+                    q0_estim=q0_new,
+                    c_range0=c_range0,
+                    beta_range0=beta_range0,
+                )
+                t_remaining = np.arange(1, n - t + 1)
+                gamma_current = c_new / (t_remaining**beta_new)
+                n_selected = 0
+                q_new = q0_new
+            else:
+                q_new = q0
 
         q[t] = q_new
         err[t] = err_t
@@ -167,7 +201,7 @@ st.title("Online conformal testing with OnlineSCI")
 
 st.markdown(
     r"""
-$q_0$: initial threshold.  
+$q_1$: initial threshold.  
 $(c, \beta)$: step-size parameters with $\gamma_t = c t^{-\beta}$.
 """
 )
@@ -186,8 +220,15 @@ with st.sidebar:
         max_value=20_000,
         value=500,
         step=100,
-        help="Size of an independently drawn sample used only to estimate q0 (not part of the online run).",
+        help="Size of an independently drawn sample used only to estimate q1 (not part of the online run).",
     )
+    restart_enabled = st.select_slider(
+        "Restart",
+        options=[False, True],
+        value=False,
+        help="Applies to both the standard (q1/c/beta sliders) and automatic methods: False = disabled (bound=0); True = whenever q_t exceeds 1 (bound=1), fully recalibrate q1/c/beta on every point seen so far, and OnlineSCI resumes from there.",
+    )
+    bound = 1.0 if restart_enabled else 0.0
 
 x, y, scores = make_data(n=n, p=p, seed=1)
 q_star = estimate_q_star(alpha=alpha, p=p)
@@ -200,7 +241,17 @@ x_burn, y_burn, scores_burn = make_data(n=n_burn, p=p, seed=2)
 t = np.arange(1, n + 1)
 gamma = c / (t**beta)
 
-q, err, selected = online_sci(scores=scores, y=y, gamma=gamma, alpha=alpha, q0=q0)
+q, err, selected = online_sci(
+    scores=scores,
+    y=y,
+    gamma=gamma,
+    alpha=alpha,
+    q0=q0,
+    bound=bound,
+    restart=restart_enabled,
+    c_range0=c_range0,
+    beta_range0=beta_range0,
+)
 fcp = selected_running_mean(err, selected)
 fcp_x = np.where(selected)[0]
 
@@ -229,14 +280,23 @@ c_gs, beta_gs = grid_search_best_params(
 )
 gamma_gs = c_gs / (t**beta_gs)
 q_gs, err_gs, selected_gs = online_sci(
-    scores=scores, y=y, gamma=gamma_gs, alpha=alpha, q0=q0_gs
+    scores=scores,
+    y=y,
+    gamma=gamma_gs,
+    alpha=alpha,
+    q0=q0_gs,
+    bound=bound,
+    restart=restart_enabled,
+    c_range0=c_range0,
+    beta_range0=beta_range0,
 )
 fcp_gs = selected_running_mean(err_gs, selected_gs)
 fcp_gs_x = np.where(selected_gs)[0]
 
 st.caption(
     f"q1 estimated on {n_burn} independent burn-in samples: {q0_gs:.3f}. Grid "
-    f"search best params on the same burn-in samples — c={c_gs}, beta={beta_gs}"
+    f"search best params on the same burn-in samples — c={c_gs}, beta={beta_gs}."
+    + (" Restart enabled (bound=1) for both methods: recalibrating whenever q_t exceeds 1." if restart_enabled else "")
 )
 
 col1, col2 = st.columns(2, gap="large")
